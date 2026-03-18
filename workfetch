@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+
+# -----------------------------------------------------
+# WorkFetch v1.4 (The Ultimate Dashboard)
+# -----------------------------------------------------
+
+DATA_FILE="$HOME/.worktracker/worklog.csv"
+TODAY=$(date +%Y-%m-%d)
+DAILY_GOAL_MINS=480  # Set your daily goal (8 hours = 480m)
+
+# --- CONFIG: CHOOSE YOUR ICONS ---
+# Un-comment the one you like best!
+# PALETTE_ICON=""  # Solid Circle (Default)
+# PALETTE_ICON=""  # Dot Circle
+PALETTE_ICON=""  # Heart
+# PALETTE_ICON=""  # Square
+# PALETTE_ICON=""  # Ghost
+# PALETTE_ICON=""  # Big Square
+
+# --- THEME & COLORS ---
+bold=$(tput bold); reset=$(tput sgr0)
+c_cyan=$(tput setaf 6); c_green=$(tput setaf 2)
+c_purple=$(tput setaf 5); c_white=$(tput setaf 7)
+c_grey=$(tput setaf 8); c_blue=$(tput setaf 4)
+c_red=$(tput setaf 1); c_yellow=$(tput setaf 3)
+
+# --- ASCII ART (Randomized) ---
+read -r -d '' LOGO_RABBIT << EOM
+${c_blue}      (\\_/)
+${c_blue}      (o.o)
+${c_blue}      (> <)
+${c_blue}     _/   \\_
+EOM
+
+read -r -d '' LOGO_COFFEE << EOM
+${c_yellow}      ( (
+${c_yellow}       ) )
+${c_yellow}    ........
+${c_yellow}    |      |]
+${c_yellow}    \\      /
+${c_yellow}     \`----'
+EOM
+
+# Pick Random Logo
+RAND=$(( RANDOM % 2 ))
+if [ $RAND -eq 0 ]; then LOGO="$LOGO_RABBIT"; else LOGO="$LOGO_COFFEE"; fi
+
+# --- LOGIC ---
+
+if [ ! -f "$DATA_FILE" ]; then echo "No work data found."; exit 1; fi
+
+REQ_TARGETS=""
+search_filter=""
+
+if [ "$#" -gt 0 ]; then
+    for arg in "$@"; do
+        if [ -z "$search_filter" ]; then
+            search_filter="tolower(\$2) ~ /$(echo "$arg" | tr '[:upper:]' '[:lower:]')/"
+        else
+            search_filter="$search_filter || tolower(\$2) ~ /$(echo "$arg" | tr '[:upper:]' '[:lower:]')/"
+        fi
+        REQ_TARGETS="${REQ_TARGETS}${arg}|"
+    done
+else
+    search_filter="1==1" 
+fi
+
+stats=$(awk -F',' -v d="$TODAY" -v filter="$search_filter" -v targets="$REQ_TARGETS" '
+    BEGIN { 
+        total_all=0 
+        n = split(targets, target_arr, "|")
+        if (targets != "") n-- 
+    }
+    NR>1 && $1 == d {
+        matches = 0
+        if ('"$search_filter"') matches = 1
+        if (matches) { sum[$2] += $3; total_all += $3 }
+    }
+    END {
+        for (i=1; i<=n; i++) {
+            t = target_arr[i]
+            found = 0
+            for (p in sum) { if (tolower(p) ~ tolower(t)) { found = 1; break } }
+            if (found == 0) sum[t] = 0
+        }
+        for (p in sum) print p "|" sum[p]
+        print "TOTAL_ALL|" total_all
+    }
+' "$DATA_FILE" | sort)
+
+total_mins=$(echo "$stats" | grep "TOTAL_ALL" | cut -d'|' -f2)
+projects=$(echo "$stats" | grep -v "TOTAL_ALL")
+
+# --- FORMATTING HELPERS ---
+
+fmt_time() {
+    local m=$1; local hrs=$((m / 60)); local min=$((m % 60))
+    if [ "$hrs" -gt 0 ]; then echo "${hrs}h ${min}m"; else echo "${min}m"; fi
+}
+
+info_lines=()
+add_row() {
+    local color=$1; local key=$2; local val=$3
+    if [ ${#key} -gt 10 ]; then key="${key:0:9}."; fi
+    printf -v padded_key "%-10s" "$key"
+    info_lines+=("${bold}${color}${padded_key}${reset} : $val")
+}
+
+# --- BUILD DISPLAY ---
+
+info_lines+=("${c_green}${USER}${c_white}@${c_green}$(hostname)${reset}")
+
+add_row "$c_white" "Date" "$TODAY"
+add_row "$c_white" "OS" "$(uname -s)"
+
+IFS=$'\n'
+for line in $projects; do
+    [ -z "$line" ] && continue
+    p_name=$(echo "$line" | cut -d'|' -f1)
+    p_min=$(echo "$line" | cut -d'|' -f2)
+    
+    row_color=$c_cyan
+    if [ "$p_min" -eq 0 ]; then row_color=$c_grey; fi
+    add_row "$row_color" "$p_name" "$(fmt_time "$p_min")"
+done
+
+# 1. Total Time
+add_row "$c_green" "Total" "$(fmt_time "${total_mins:-0}")"
+
+# 2. Progress Bar
+pct=$(( (total_mins * 100) / DAILY_GOAL_MINS ))
+if [ $pct -gt 100 ]; then pct=100; fi
+filled=$(( (pct * 15) / 100 )) # Bar width 15 chars
+bar=""
+for ((i=0; i<filled; i++)); do bar+="━"; done
+for ((i=filled; i<15; i++)); do bar+="─"; done
+
+# Progress row color changes based on completion
+p_color=$c_red
+if [ $pct -ge 50 ]; then p_color=$c_yellow; fi
+if [ $pct -ge 100 ]; then p_color=$c_green; fi
+
+add_row "$p_color" "Progress" "${bar} ${pct}%"
+
+
+# --- RENDER ---
+
+IFS=$'\n' read -d '' -r -a logo_arr <<< "$LOGO"
+logo_len=${#logo_arr[@]}
+info_len=${#info_lines[@]}
+max_len=$(( logo_len > info_len ? logo_len : info_len ))
+LOGO_COL_WIDTH=18
+
+echo ""
+for (( i=0; i<max_len; i++ )); do
+    line_l="${logo_arr[$i]}"
+    line_r="${info_lines[$i]}"
+    
+    clean_l=$(echo -e "$line_l" | sed $'s/\033\[[0-9;]*m//g')
+    len_l=${#clean_l}
+    pad_len=$(( LOGO_COL_WIDTH - len_l ))
+    if [ $pad_len -lt 0 ]; then pad_len=0; fi
+    printf -v pad_str "%${pad_len}s" ""
+    
+    echo -ne "${line_l}${pad_str}  "
+    echo -e "${line_r}"
+done
+
+# --- PALETTE STRIP (ICONS) ---
+echo ""
+printf "%${LOGO_COL_WIDTH}s  " "" # Indent to match info column
+for i in {1..6}; do
+    tput setaf $i
+    echo -ne "${PALETTE_ICON}  "
+    tput sgr0
+done
+echo ""
+echo ""

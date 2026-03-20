@@ -17,5 +17,15 @@ A minimalist, `neofetch`-inspired dashboard for tracking daily work hours. Perfe
    ```bash
    git clone git@github.com:tanaybhomia/workfetch.git
    cd workfetch
+   sudo mv workfetch /usr/bin/
+   cd /usr/bin/
    chmod +x workfetch.sh
    ```
+2. **Add your Favourite Projects**
+   ```bash
+   workfetch Project Project
+   ```
+
+## PSA
+Works only with the work script that you can find here to track your projects 
+[Work](https://github.com/tanaybhomia/Work)
